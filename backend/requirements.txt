@@ -1,9 +1,15 @@
-fastapi
+# fastapi
 uvicorn[standard]
+# pydantic
+# python-dotenv
+# httpx
+# cashu
+
+
+fastapi
+# uvicorn
+httpx
 pydantic
 python-dotenv
-httpx
-
-wheel
-pkg-config
-cashu
+marshmallow>=3.13,<4.0
+cashu>=0.18.2
