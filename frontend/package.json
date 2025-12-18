@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "cyphertap": "^0.0.36"
+    "cyphertap": "file:../cyphertap"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
