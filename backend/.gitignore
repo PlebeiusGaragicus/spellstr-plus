@@ -1,0 +1,6 @@
+__pycache__
+*.pyc
+.env
+wallet_db/
+*.db
+.DS_Store
