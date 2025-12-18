@@ -8,6 +8,9 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
     env_file:
       - ./frontend/.env
     depends_on:
@@ -23,6 +26,9 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
     env_file:
       - ./backend/.env
     networks:

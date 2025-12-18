@@ -1,23 +1,14 @@
 <script>
+  import { cyphertap } from 'cyphertap'
   import { userStore, sessionStore } from './stores.js'
 
   let { onStart } = $props()
 
-  let isLoggedIn = $state(false)
-  let isPaid = $state(false)
   let isLoading = $state(false)
   let error = $state(null)
 
-  userStore.subscribe(value => {
-    isLoggedIn = value.isLoggedIn
-  })
-
-  sessionStore.subscribe(value => {
-    isPaid = value.isPaid
-  })
-
   async function handlePayAndStart() {
-    if (!isLoggedIn) {
+    if (!cyphertap.isLoggedIn) {
       error = 'Please login first using the CypherTap button above.'
       return
     }
@@ -26,10 +17,15 @@
     error = null
 
     try {
+      const { token } = await cyphertap.generateEcashToken(1, 'Spellstr session')
+      
       const response = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pubkey: $userStore?.pubkey })
+        body: JSON.stringify({ 
+          pubkey: cyphertap.npub,
+          token: token
+        })
       })
 
       if (!response.ok) {
@@ -37,18 +33,18 @@
       }
 
       const data = await response.json()
+      if (!data.success) {
+        throw new Error(data.message || 'Session start failed')
+      }
+      
       sessionStore.set({ isActive: true, isPaid: true })
       onStart()
     } catch (err) {
       console.error('Payment failed:', err)
-      error = 'Failed to start session. Please try again.'
+      error = err.message || 'Failed to start session. Please try again.'
     } finally {
       isLoading = false
     }
-  }
-
-  function handleDemoStart() {
-    onStart()
   }
 </script>
 
@@ -61,7 +57,7 @@
     </p>
   </div>
 
-  {#if !isLoggedIn}
+  {#if !cyphertap.isLoggedIn}
     <div class="login-prompt">
       <div class="prompt-icon">🔑</div>
       <h3>Get Started</h3>
@@ -70,24 +66,26 @@
         Sessions cost just 1 sat!
       </p>
     </div>
+  {:else}
+    <div class="balance-info">
+      <p>Balance: <strong>{cyphertap.balance}</strong> sats</p>
+    </div>
   {/if}
 
   <div class="actions">
-    {#if isLoggedIn}
+    {#if cyphertap.isLoggedIn}
       <button 
         class="btn btn-primary start-btn" 
         onclick={handlePayAndStart}
-        disabled={isLoading}
+        disabled={isLoading || cyphertap.balance < 1}
       >
         {#if isLoading}
           Starting...
+        {:else if cyphertap.balance < 1}
+          Insufficient Balance
         {:else}
           ⚡ Pay 1 sat & Start
         {/if}
-      </button>
-    {:else}
-      <button class="btn btn-secondary" onclick={handleDemoStart}>
-        Try Demo (Free)
       </button>
     {/if}
   </div>
@@ -154,6 +152,23 @@
     color: var(--muted);
     font-size: 14px;
     line-height: 1.5;
+  }
+
+  .balance-info {
+    background: rgba(22, 163, 74, 0.1);
+    border: 1px solid rgba(22, 163, 74, 0.3);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 24px;
+  }
+
+  .balance-info p {
+    margin: 0;
+    font-size: 16px;
+  }
+
+  .balance-info strong {
+    color: var(--ok);
   }
 
   .actions {

@@ -1,12 +1,5 @@
 <script>
-  import { userStore } from './stores.js'
-  import CypherTap from './CypherTap.svelte'
-
-  let user = $state({ pubkey: null, isLoggedIn: false })
-
-  userStore.subscribe(value => {
-    user = value
-  })
+  import { Cyphertap } from 'cyphertap'
 </script>
 
 <header class="navbar">
@@ -16,7 +9,7 @@
   </div>
   
   <div class="navbar-actions">
-    <CypherTap />
+    <Cyphertap />
   </div>
 </header>
 
