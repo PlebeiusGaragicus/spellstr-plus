@@ -37,10 +37,3 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
-  - Features: features.md
-  - Roadmap: roadmap.md
-  - Design Overview:
-    - API Reference: overview/endpoints.md
-  - Setup:
-    - Production: setup/production.md
-    - Development: setup/development.md
