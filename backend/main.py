@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -36,6 +36,23 @@ sessions = {}
 
 SESSION_DURATION_HOURS = 24
 SESSION_COST_SATS = 1
+
+# Admin configuration
+ADMIN_NPUB = os.getenv("ADMIN_NPUB", "")
+logger.info(f"Admin npub configured: {ADMIN_NPUB[:20]}..." if ADMIN_NPUB else "No admin npub configured")
+
+
+def verify_admin(x_npub: Optional[str] = None) -> bool:
+    """Verify that the request is from an admin"""
+    if not ADMIN_NPUB:
+        logger.warning("No ADMIN_NPUB configured - admin access denied")
+        return False
+    if not x_npub:
+        logger.warning("No x-npub header provided")
+        return False
+    is_admin = x_npub == ADMIN_NPUB
+    logger.debug(f"Admin verification: provided={x_npub[:20]}..., expected={ADMIN_NPUB[:20]}..., match={is_admin}")
+    return is_admin
 
 
 class RedeemRequest(BaseModel):
@@ -257,6 +274,146 @@ async def get_session(session_id: str):
         "valid": True,
         "expires_at": session["expires_at"]
     }
+
+
+# =============================================================================
+# Admin Endpoints
+# =============================================================================
+
+@app.post("/admin/verify")
+async def admin_verify(x_npub: Optional[str] = Header(None)):
+    """Verify admin access"""
+    logger.info(f"POST /admin/verify - npub: {x_npub[:20] if x_npub else 'None'}...")
+    
+    if not verify_admin(x_npub):
+        raise HTTPException(status_code=403, detail="Unauthorized - not an admin")
+    
+    return {"success": True, "message": "Admin verified"}
+
+
+@app.get("/admin/stats")
+async def admin_stats(x_npub: Optional[str] = Header(None)):
+    """Get wallet stats for admin dashboard"""
+    logger.info(f"GET /admin/stats")
+    
+    if not verify_admin(x_npub):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
+    mint_url = os.getenv("MINT_URL", "https://mint.minibits.cash/Bitcoin")
+    wallet_db = os.getenv("WALLET_DB", "./wallet_db")
+    
+    wallet_balance = 0
+    proof_count = 0
+    
+    try:
+        from cashu.wallet.wallet import Wallet
+        
+        wallet = await Wallet.with_db(url=mint_url, db=wallet_db, unit="sat")
+        await wallet.load_mint()
+        await wallet.load_proofs(reload=True)
+        
+        # available_balance returns an object with .amount property
+        wallet_balance = wallet.available_balance.amount if hasattr(wallet.available_balance, 'amount') else int(wallet.available_balance)
+        proof_count = len(wallet.proofs) if hasattr(wallet, 'proofs') else 0
+        logger.debug(f"Wallet balance: {wallet_balance}, proofs: {proof_count}")
+    except Exception as e:
+        logger.error(f"Failed to get wallet stats: {e}")
+        logger.exception("Full traceback:")
+    
+    return {
+        "wallet_balance": wallet_balance,
+        "sessions_count": len(sessions),
+        "proof_count": proof_count,
+        "default_mint": mint_url,
+        "wallet_db": wallet_db,
+    }
+
+
+@app.get("/admin/proofs")
+async def admin_proofs(x_npub: Optional[str] = Header(None)):
+    """Get list of proofs in wallet"""
+    logger.info(f"GET /admin/proofs")
+    
+    if not verify_admin(x_npub):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
+    mint_url = os.getenv("MINT_URL", "https://mint.minibits.cash/Bitcoin")
+    wallet_db = os.getenv("WALLET_DB", "./wallet_db")
+    
+    proofs_list = []
+    
+    try:
+        from cashu.wallet.wallet import Wallet
+        
+        wallet = await Wallet.with_db(url=mint_url, db=wallet_db, unit="sat")
+        await wallet.load_mint()
+        await wallet.load_proofs(reload=True)
+        
+        if hasattr(wallet, 'proofs') and wallet.proofs:
+            for p in wallet.proofs:
+                proofs_list.append({
+                    "amount": p.amount,
+                    "keyset_id": p.id[:16] if p.id else "unknown",
+                })
+    except Exception as e:
+        logger.error(f"Failed to get proofs: {e}")
+        logger.exception("Full traceback:")
+    
+    return {
+        "count": len(proofs_list),
+        "proofs": proofs_list,
+    }
+
+
+@app.post("/admin/sweep")
+async def admin_sweep(x_npub: Optional[str] = Header(None)):
+    """Sweep all wallet balance to a cashu token"""
+    logger.info(f"POST /admin/sweep")
+    
+    if not verify_admin(x_npub):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
+    mint_url = os.getenv("MINT_URL", "https://mint.minibits.cash/Bitcoin")
+    wallet_db = os.getenv("WALLET_DB", "./wallet_db")
+    
+    try:
+        from cashu.wallet.wallet import Wallet
+        
+        wallet = await Wallet.with_db(url=mint_url, db=wallet_db, unit="sat")
+        await wallet.load_mint()
+        await wallet.load_proofs(reload=True)
+        
+        # available_balance returns an object with .amount property
+        balance = wallet.available_balance.amount if hasattr(wallet.available_balance, 'amount') else int(wallet.available_balance)
+        
+        if balance < 1:
+            return {"success": False, "error": "No balance to sweep"}
+        
+        proofs = wallet.proofs
+        if not proofs:
+            return {"success": False, "error": "No proofs in wallet"}
+        
+        logger.info(f"Sweeping {balance} sats to token...")
+        
+        # Use wallet's built-in serialization method directly on existing proofs
+        token = await wallet.serialize_proofs(proofs, memo="Spellstr wallet sweep")
+        
+        logger.info(f"Sweep successful: {balance} sats")
+        logger.debug(f"Token: {token[:50]}...")
+        
+        # Invalidate proofs after creating token (remove from wallet)
+        await wallet.invalidate(proofs=proofs, check_spendable=False)
+        
+        return {
+            "success": True,
+            "amount": balance,
+            "token": token,
+        }
+        
+    except Exception as e:
+        logger.error(f"Sweep failed: {e}")
+        logger.exception("Full traceback:")
+        return {"success": False, "error": str(e)}
 
 
 if __name__ == "__main__":
